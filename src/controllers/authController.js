@@ -41,97 +41,39 @@ const sendOTP = async (req, res) => {
 
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
-  // Set a timeout for the entire operation
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Operation timed out')), 25000);
-  });
-
   try {
-    const {mobileNumber, otp, orderId} = req.body; 
-    console.log('Received verification request:', { mobileNumber, otp, orderId });
-
+    const {mobileNumber,otp,orderId} = req.body; 
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    
-    if (!mobileNumber || !otp || !orderId) {
-      console.log('Missing required fields:', { 
-        hasMobileNumber: !!mobileNumber, 
-        hasOtp: !!otp, 
-        hasOrderId: !!orderId 
-      });
-      return res.status(400).json({ 
-        status: 'error',
-        message: 'Mobile number, OTP, and orderId are required',
-        details: { 
-          hasMobileNumber: !!mobileNumber, 
-          hasOtp: !!otp, 
-          hasOrderId: !!orderId 
-        }
-      });
+    if (!mobileNumber || !otp) {
+      return res.status(400).json({ message: 'Mobile number and OTP are required' });
     }
 
     const phoneNumber = "+91"+mobileNumber;
-    console.log('Attempting OTP verification for:', { phoneNumber, orderId });
-    
-    try {
-      // Race between the verification and timeout
-      const response = await Promise.race([
-        UserDetail.verifyOTP("", phoneNumber, orderId, otp, clientId, clientSecret),
-        timeoutPromise
-      ]);
+    const response = await UserDetail.verifyOTP("", phoneNumber, orderId, otp, clientId, clientSecret);
 
-      console.log('OTP verification response:', response);
-
-      if (!response || !response.isOTPVerified) {
-        console.log('OTP verification failed:', response);
-        return res.status(400).json({ 
-          status: 'error',
-          message: 'Invalid OTP',
-          details: 'OTP verification failed'
-        });
-      }
-
-      // Find or create user in the database
-      let user = await User.findOne({ mobileNumber }).maxTimeMS(5000); // Add timeout for DB query
-      if (!user) {
-        console.log('Creating new user for:', mobileNumber);
-        user = new User({ mobileNumber });
-        await user.save({ timeout: 5000 }); // Add timeout for save operation
-      }
-
-      // Generate JWT
-      const token = generateJWTToken(user._id);
-      console.log('Login successful for user:', mobileNumber);
-
-      return res.status(200).json({
-        status: 'success',
-        token,
-        userStatus: user.status || 'In Progress',
-        message: 'Login successful'
-      });
-    } catch (verifyError) {
-      console.error('OTP verification error:', verifyError);
-      const errorMessage = verifyError.message === 'Operation timed out' 
-        ? 'Verification is taking longer than expected. Please try again.'
-        : 'OTP verification failed';
-
-      return res.status(verifyError.message === 'Operation timed out' ? 504 : 400).json({ 
-        status: 'error',
-        message: errorMessage,
-        details: verifyError.message
-      });
+    const {isOTPVerified} = response; // Replace with actual verification logic
+    if (!isOTPVerified) {
+      return res.status(400).json({ message: 'Invalid OTP' });
     }
-  } catch (error) {
-    console.error('Login error:', error);
-    const errorMessage = error.message === 'Operation timed out'
-      ? 'Request took too long to process. Please try again.'
-      : 'Server error during login';
 
-    return res.status(error.message === 'Operation timed out' ? 504 : 500).json({ 
-      status: 'error',
-      message: errorMessage,
-      details: error.message
+    // Find or create user in the database
+    let user = await User.findOne({ mobileNumber });
+    if (!user) {
+      user = new User({ mobileNumber });
+      await user.save();
+    }
+
+    // Generate JWT
+    const token = generateJWTToken(user._id);
+
+    return res.status(200).json({
+      token,
+      userStatus: user.status,
+      message: 'Login successful',
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 };
 
