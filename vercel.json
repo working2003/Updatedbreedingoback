@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "src/index.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "src/index.js"
+    }
+  ],
+  "env": {
+    "PORT": "8000",
+    "DB_URL": "@db_url",
+    "JWT_SECRET": "@jwt_secret",
+    "OTPLESS_TOKEN_ID": "@otpless_token_id",
+    "OTPLESS_CLIENT_ID": "@otpless_client_secret",
+    "OTPLESS_CLIENT_SECRET": "@otpless_client_secret",
+    "OTPLESS_CHANNEL": "SMS",
+    "OTPLESS_EXPIRY": "300",
+    "OTPLESS_OTP_LENGTH": "4"
+  }
+}
