@@ -6,38 +6,48 @@ const userSchema = new mongoose.Schema({
   userId: {
     type: Number,
     unique: true,
-    // required: true, // Automatically generated (use a plugin like 'mongoose-sequence' for auto-increment)
+    sparse: true, // Allow null values, only enforce uniqueness on non-null values
   },
   firstName: {
     type: String,
+    trim: true,
   },
   lastName: {
     type: String,
+    trim: true,
   },
   mobileNumber: {
     type: String,
     required: true,
-    validator: function(v) {
-      return /^[0-9]{10}$/.test(v);
+    unique: true,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        return /^[0-9]{10}$/.test(v);
+      },
+      message: props => `${props.value} is not a valid mobile number!`
     },
-    message: props => `${props.value} is not a valid mobile number!`,
-    minLength: 10,
-    maxLength: 10
+    index: true // Add index for faster queries
   },
   farmName: {
     type: String,
+    trim: true,
   },
   state: {
     type: String,
+    trim: true,
   },
   district: {
     type: String,
+    trim: true,
   },
   taluka: {
     type: String,
+    trim: true,
   },
   village: {
     type: String,
+    trim: true,
   },
   pinCode: {
     type: Number,
@@ -82,13 +92,22 @@ const userSchema = new mongoose.Schema({
     required: true,
     default: false,
   },
+}, {
+  timestamps: true, // Adds createdAt and updatedAt
+  toJSON: { 
+    transform: function(doc, ret) {
+      delete ret.__v;
+      return ret;
+    }
+  }
 });
 
-userSchema.plugin(AutoIncrement, { inc_field: 'userId' });
+// Add compound index for common queries
+userSchema.index({ mobileNumber: 1, status: 1 });
 
-//model create by using schema
-const User = mongoose.model('User',userSchema);
+// Add the auto-increment plugin
+userSchema.plugin(AutoIncrement, {inc_field: 'userId'});
 
+const User = mongoose.model('User', userSchema)
 
-
-module.exports = User;
+module.exports = User
