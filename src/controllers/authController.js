@@ -43,25 +43,39 @@ const sendOTP = async (req, res) => {
 const verifyOTPAndLogin = async (req, res) => {
   try {
     const {mobileNumber, otp, orderId} = req.body; 
+    console.log('Received verification request:', { mobileNumber, otp, orderId });
+
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
     
     if (!mobileNumber || !otp || !orderId) {
+      console.log('Missing required fields:', { 
+        hasMobileNumber: !!mobileNumber, 
+        hasOtp: !!otp, 
+        hasOrderId: !!orderId 
+      });
       return res.status(400).json({ 
+        status: 'error',
         message: 'Mobile number, OTP, and orderId are required',
-        received: { mobileNumber: !!mobileNumber, otp: !!otp, orderId: !!orderId }
+        details: { 
+          hasMobileNumber: !!mobileNumber, 
+          hasOtp: !!otp, 
+          hasOrderId: !!orderId 
+        }
       });
     }
 
     const phoneNumber = "+91"+mobileNumber;
-    console.log('Verifying OTP with:', { phoneNumber, orderId, otp });
+    console.log('Attempting OTP verification for:', { phoneNumber, orderId });
     
     try {
       const response = await UserDetail.verifyOTP("", phoneNumber, orderId, otp, clientId, clientSecret);
       console.log('OTP verification response:', response);
 
       if (!response || !response.isOTPVerified) {
+        console.log('OTP verification failed:', response);
         return res.status(400).json({ 
+          status: 'error',
           message: 'Invalid OTP',
           details: 'OTP verification failed'
         });
@@ -70,30 +84,35 @@ const verifyOTPAndLogin = async (req, res) => {
       // Find or create user in the database
       let user = await User.findOne({ mobileNumber });
       if (!user) {
+        console.log('Creating new user for:', mobileNumber);
         user = new User({ mobileNumber });
         await user.save();
       }
 
       // Generate JWT
       const token = generateJWTToken(user._id);
+      console.log('Login successful for user:', mobileNumber);
 
       return res.status(200).json({
+        status: 'success',
         token,
-        userStatus: user.status,
+        userStatus: user.status || 'In Progress',
         message: 'Login successful'
       });
     } catch (verifyError) {
       console.error('OTP verification error:', verifyError);
       return res.status(400).json({ 
+        status: 'error',
         message: 'OTP verification failed',
-        error: verifyError.message
+        details: verifyError.message
       });
     }
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ 
+    return res.status(500).json({ 
+      status: 'error',
       message: 'Server error during login',
-      error: error.message
+      details: error.message
     });
   }
 };
