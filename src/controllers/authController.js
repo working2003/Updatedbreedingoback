@@ -42,38 +42,59 @@ const sendOTP = async (req, res) => {
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
   try {
-    const {mobileNumber,otp,orderId} = req.body; 
+    const {mobileNumber, otp, orderId} = req.body; 
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    if (!mobileNumber || !otp) {
-      return res.status(400).json({ message: 'Mobile number and OTP are required' });
+    
+    if (!mobileNumber || !otp || !orderId) {
+      return res.status(400).json({ 
+        message: 'Mobile number, OTP, and orderId are required',
+        received: { mobileNumber: !!mobileNumber, otp: !!otp, orderId: !!orderId }
+      });
     }
 
     const phoneNumber = "+91"+mobileNumber;
-    const response = await UserDetail.verifyOTP("", phoneNumber, orderId, otp, clientId, clientSecret);
+    console.log('Verifying OTP with:', { phoneNumber, orderId, otp });
+    
+    try {
+      const response = await UserDetail.verifyOTP("", phoneNumber, orderId, otp, clientId, clientSecret);
+      console.log('OTP verification response:', response);
 
-    const {isOTPVerified} = response; // Replace with actual verification logic
-    if (!isOTPVerified) {
-      return res.status(400).json({ message: 'Invalid OTP' });
+      if (!response || !response.isOTPVerified) {
+        return res.status(400).json({ 
+          message: 'Invalid OTP',
+          details: 'OTP verification failed'
+        });
+      }
+
+      // Find or create user in the database
+      let user = await User.findOne({ mobileNumber });
+      if (!user) {
+        user = new User({ mobileNumber });
+        await user.save();
+      }
+
+      // Generate JWT
+      const token = generateJWTToken(user._id);
+
+      return res.status(200).json({
+        token,
+        userStatus: user.status,
+        message: 'Login successful'
+      });
+    } catch (verifyError) {
+      console.error('OTP verification error:', verifyError);
+      return res.status(400).json({ 
+        message: 'OTP verification failed',
+        error: verifyError.message
+      });
     }
-
-    // Find or create user in the database
-    let user = await User.findOne({ mobileNumber });
-    if (!user) {
-      user = new User({ mobileNumber });
-      await user.save();
-    }
-
-    // Generate JWT
-    const token = generateJWTToken(user._id);
-
-    return res.status(200).json({
-      token,
-      userStatus: user.status,
-      message: 'Login successful',
-    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Login error:', error);
+    res.status(500).json({ 
+      message: 'Server error during login',
+      error: error.message
+    });
   }
 };
 
