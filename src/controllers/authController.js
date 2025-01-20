@@ -41,6 +41,11 @@ const sendOTP = async (req, res) => {
 
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
+  // Set a timeout for the entire operation
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Operation timed out')), 25000);
+  });
+
   try {
     const {mobileNumber, otp, orderId} = req.body; 
     console.log('Received verification request:', { mobileNumber, otp, orderId });
@@ -69,18 +74,11 @@ const verifyOTPAndLogin = async (req, res) => {
     console.log('Attempting OTP verification for:', { phoneNumber, orderId });
     
     try {
-      // First, try to find the user early to avoid verification if user doesn't exist
-      let user = await User.findOne({ mobileNumber }).select('_id status').lean();
-      
-      // Verify OTP
-      const response = await UserDetail.verifyOTP(
-        "", // empty string for email
-        phoneNumber,
-        orderId,
-        otp,
-        clientId,
-        clientSecret
-      );
+      // Race between the verification and timeout
+      const response = await Promise.race([
+        UserDetail.verifyOTP("", phoneNumber, orderId, otp, clientId, clientSecret),
+        timeoutPromise
+      ]);
 
       console.log('OTP verification response:', response);
 
@@ -93,14 +91,12 @@ const verifyOTPAndLogin = async (req, res) => {
         });
       }
 
-      // Create user if doesn't exist
+      // Find or create user in the database
+      let user = await User.findOne({ mobileNumber }).maxTimeMS(5000); // Add timeout for DB query
       if (!user) {
         console.log('Creating new user for:', mobileNumber);
-        const newUser = new User({ 
-          mobileNumber,
-          status: 'In Progress'
-        });
-        user = await newUser.save();
+        user = new User({ mobileNumber });
+        await user.save({ timeout: 5000 }); // Add timeout for save operation
       }
 
       // Generate JWT
@@ -115,17 +111,25 @@ const verifyOTPAndLogin = async (req, res) => {
       });
     } catch (verifyError) {
       console.error('OTP verification error:', verifyError);
-      return res.status(400).json({ 
+      const errorMessage = verifyError.message === 'Operation timed out' 
+        ? 'Verification is taking longer than expected. Please try again.'
+        : 'OTP verification failed';
+
+      return res.status(verifyError.message === 'Operation timed out' ? 504 : 400).json({ 
         status: 'error',
-        message: 'OTP verification failed',
+        message: errorMessage,
         details: verifyError.message
       });
     }
   } catch (error) {
     console.error('Login error:', error);
-    return res.status(500).json({ 
+    const errorMessage = error.message === 'Operation timed out'
+      ? 'Request took too long to process. Please try again.'
+      : 'Server error during login';
+
+    return res.status(error.message === 'Operation timed out' ? 504 : 500).json({ 
       status: 'error',
-      message: 'Server error during login',
+      message: errorMessage,
       details: error.message
     });
   }
