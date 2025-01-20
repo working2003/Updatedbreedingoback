@@ -4,7 +4,6 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/user'); // Your User model
 const { UserDetail } = require('otpless-node-js-auth-sdk');
 
-
 // Helper to generate a JWT
 const generateJWTToken = (userId) => {
   const JWT_EXPIRATION_Value = process.env.JWT_EXPIRATION || '180d'
@@ -16,6 +15,12 @@ const generateJWTToken = (userId) => {
 // Step 1: Send OTP
 const sendOTP = async (req, res) => {
   try {
+    const { mobileNumber } = req.body;
+
+    if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) {
+      return res.status(400).json({ message: 'Invalid mobile number' });
+    }
+
     const email = process.env.OTPLESS_EMAIL;
     const channel = process.env.OTPLESS_CHANNEL;
     const hash = process.env.OTPLESS_TOKEN_ID;
@@ -24,79 +29,89 @@ const sendOTP = async (req, res) => {
     const otpLength=process.env.OTPLESS_OTP_LENGTH;
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    const { mobileNumber } = req.body;
-
-    if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) {
-      return res.status(400).json({ message: 'Invalid mobile number' });
-    }
+    
     const phoneNumber = "+91"+mobileNumber;
 
-    const response = await UserDetail.sendOTP(phoneNumber, email, channel, hash, orderId, expiry, otpLength, clientId, clientSecret);
+    console.log('Sending OTP with:', {
+      phoneNumber,
+      channel,
+      hash,
+      orderId,
+      expiry,
+      otpLength
+    });
 
-    return res.status(200).json({ message: 'OTP sent successfully' ,response});
+    const response = await UserDetail.sendOTP(
+      phoneNumber, 
+      email, 
+      channel, 
+      hash, 
+      orderId, 
+      expiry, 
+      otpLength, 
+      clientId, 
+      clientSecret
+    );
+
+    console.log('OTP send response:', response);
+
+    return res.status(200).json({ 
+      message: 'OTP sent successfully',
+      response: { orderId }
+    });
   } catch (error) {
+    console.error('Error sending OTP:', error);
     res.status(500).json({ error: error.message });
   }
 };
 
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
-  // Set a timeout for the entire operation
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Operation timed out')), 25000);
-  });
-
   try {
     const {mobileNumber, otp, orderId} = req.body; 
-    console.log('Received verification request:', { mobileNumber, otp, orderId });
+    console.log('Verifying OTP for:', { mobileNumber, orderId });
 
-    const clientId = process.env.OTPLESS_CLIENT_ID;
-    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    
     if (!mobileNumber || !otp || !orderId) {
-      console.log('Missing required fields:', { 
-        hasMobileNumber: !!mobileNumber, 
-        hasOtp: !!otp, 
-        hasOrderId: !!orderId 
-      });
       return res.status(400).json({ 
-        status: 'error',
-        message: 'Mobile number, OTP, and orderId are required',
-        details: { 
-          hasMobileNumber: !!mobileNumber, 
-          hasOtp: !!otp, 
-          hasOrderId: !!orderId 
-        }
+        message: 'Mobile number, OTP, and orderId are required'
       });
     }
 
+    const clientId = process.env.OTPLESS_CLIENT_ID;
+    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
     const phoneNumber = "+91"+mobileNumber;
-    console.log('Attempting OTP verification for:', { phoneNumber, orderId });
-    
+
     try {
-      // Race between the verification and timeout
-      const response = await Promise.race([
-        UserDetail.verifyOTP("", phoneNumber, orderId, otp, clientId, clientSecret),
-        timeoutPromise
-      ]);
+      console.log('Calling OTPless verify with:', {
+        phoneNumber,
+        orderId,
+        clientId: clientId ? 'present' : 'missing',
+        clientSecret: clientSecret ? 'present' : 'missing'
+      });
 
-      console.log('OTP verification response:', response);
+      const verifyResponse = await UserDetail.verifyOTP(
+        "", 
+        phoneNumber, 
+        orderId, 
+        otp, 
+        clientId, 
+        clientSecret
+      );
 
-      if (!response || !response.isOTPVerified) {
-        console.log('OTP verification failed:', response);
+      console.log('Verify response:', verifyResponse);
+
+      if (!verifyResponse || !verifyResponse.isOTPVerified) {
         return res.status(400).json({ 
-          status: 'error',
-          message: 'Invalid OTP',
-          details: 'OTP verification failed'
+          message: 'Invalid OTP'
         });
       }
 
       // Find or create user in the database
-      let user = await User.findOne({ mobileNumber }).maxTimeMS(5000); // Add timeout for DB query
+      let user = await User.findOne({ mobileNumber });
       if (!user) {
         console.log('Creating new user for:', mobileNumber);
         user = new User({ mobileNumber });
-        await user.save({ timeout: 5000 }); // Add timeout for save operation
+        await user.save();
       }
 
       // Generate JWT
@@ -110,27 +125,17 @@ const verifyOTPAndLogin = async (req, res) => {
         message: 'Login successful'
       });
     } catch (verifyError) {
-      console.error('OTP verification error:', verifyError);
-      const errorMessage = verifyError.message === 'Operation timed out' 
-        ? 'Verification is taking longer than expected. Please try again.'
-        : 'OTP verification failed';
-
-      return res.status(verifyError.message === 'Operation timed out' ? 504 : 400).json({ 
-        status: 'error',
-        message: errorMessage,
-        details: verifyError.message
+      console.error('OTP verification failed:', verifyError);
+      return res.status(400).json({ 
+        message: 'OTP verification failed',
+        error: verifyError.message
       });
     }
   } catch (error) {
     console.error('Login error:', error);
-    const errorMessage = error.message === 'Operation timed out'
-      ? 'Request took too long to process. Please try again.'
-      : 'Server error during login';
-
-    return res.status(error.message === 'Operation timed out' ? 504 : 500).json({ 
-      status: 'error',
-      message: errorMessage,
-      details: error.message
+    return res.status(500).json({ 
+      message: 'Server error during login',
+      error: error.message
     });
   }
 };
